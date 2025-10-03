@@ -185,6 +185,23 @@ Technical Requirements:
             aspect_ratio_value = request.aspect_ratio.value if request.aspect_ratio and hasattr(request.aspect_ratio, 'value') else str(request.aspect_ratio) if request.aspect_ratio else "16:9"
             resolution_value = request.resolution.value if request.resolution and hasattr(request.resolution, 'value') else str(request.resolution) if request.resolution else "720p"
             
+            # Build the payload - only include supported parameter combinations
+            payload_instance = {
+                "prompt": prompt,
+                "personGeneration": "allow_all"
+            }
+            
+            # Add aspectRatio - always supported
+            payload_instance["aspectRatio"] = aspect_ratio_value
+            
+            # Add resolution only for supported combinations
+            # According to docs: 720p (default), 1080p (16:9 only)
+            if resolution_value == "1080p" and aspect_ratio_value == "16:9":
+                payload_instance["resolution"] = "1080p"
+            elif resolution_value == "720p":
+                payload_instance["resolution"] = "720p"
+            # For other combinations, don't include resolution (uses default)
+            
             # Note: As of now, the google-generativeai library doesn't have direct Veo3 support
             # We need to use the REST API directly until the library is updated
             
@@ -196,16 +213,11 @@ Technical Requirements:
             }
             
             payload = {
-                "instances": [{
-                    "prompt": prompt,
-                    "aspectRatio": aspect_ratio_value,
-                    "resolution": resolution_value,
-                    "personGeneration": "allow_all"
-                }]
+                "instances": [payload_instance]
             }
             
             # Start the video generation operation
-            logger.info("Sending request to Veo3 API...")
+            logger.info(f"Sending request to Veo3 API with payload: {payload}")
             response = requests.post(api_url, headers=headers, json=payload)
             
             if response.status_code != 200:
