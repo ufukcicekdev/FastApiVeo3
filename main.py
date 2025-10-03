@@ -1,6 +1,7 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer
 import uvicorn
 from contextlib import asynccontextmanager
 import logging
@@ -13,6 +14,7 @@ from models import (
 )
 from video_service import video_service
 from config import settings
+from auth import require_auth, optional_auth, auth_service
 
 # Configure logging
 logging.basicConfig(level=getattr(logging, settings.log_level))
@@ -34,6 +36,9 @@ app = FastAPI(
     redoc_url="/redoc",
     lifespan=lifespan
 )
+
+# Add security scheme to OpenAPI
+security = HTTPBearer()
 
 # Add CORS middleware
 app.add_middleware(
@@ -60,11 +65,42 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "veo3-video-api",
-        "environment": settings.environment
+        "environment": settings.environment,
+        "auth_required": settings.require_auth
+    }
+
+@app.post("/auth/generate-key", tags=["Authentication"])
+async def generate_api_key():
+    """
+    Generate a new API key. 
+    Only available in development or when no auth is required.
+    """
+    if settings.is_production and settings.require_auth:
+        raise HTTPException(
+            status_code=403,
+            detail="API key generation not available in production"
+        )
+    
+    new_key = auth_service.generate_api_key()
+    return {
+        "api_key": new_key,
+        "message": "Save this key securely - it won't be shown again",
+        "usage": "Add 'Authorization: Bearer <api_key>' header to requests"
+    }
+
+@app.get("/auth/verify", tags=["Authentication"])
+async def verify_auth(token: str = require_auth):
+    """
+    Verify if the provided token is valid.
+    """
+    return {
+        "valid": True,
+        "message": "Token is valid",
+        "token_preview": f"{token[:8]}..." if len(token) > 8 else "***"
     }
 
 @app.post("/generate", response_model=VideoGenerationResponse, tags=["Video Generation"])
-async def generate_video(request: VideoGenerationRequest):
+async def generate_video(request: VideoGenerationRequest, token: str = require_auth):
     """
     Generate a video from a text prompt using Google Gemini Veo3.
     
@@ -116,7 +152,7 @@ async def generate_video(request: VideoGenerationRequest):
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/status/{task_id}", response_model=TaskStatusResponse, tags=["Video Generation"])
-async def get_task_status(task_id: str):
+async def get_task_status(task_id: str, token: str = require_auth):
     """
     Get the status of a video generation task.
     
@@ -149,7 +185,7 @@ async def get_task_status(task_id: str):
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/tasks", tags=["Video Generation"])
-async def list_tasks():
+async def list_tasks(token: str = require_auth):
     """
     List all video generation tasks.
     
@@ -167,7 +203,7 @@ async def list_tasks():
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.delete("/tasks/{task_id}", tags=["Video Generation"])
-async def cancel_task(task_id: str):
+async def cancel_task(task_id: str, token: str = require_auth):
     """
     Cancel a video generation task.
     
@@ -225,27 +261,27 @@ async def general_exception_handler(request, exc):
 
 # N8N webhook endpoint for easier integration
 @app.post("/webhook/generate", response_model=VideoGenerationResponse, tags=["Webhooks"])
-async def webhook_generate_video(request: VideoGenerationRequest):
+async def webhook_generate_video(request: VideoGenerationRequest, token: str = require_auth):
     """
     Webhook endpoint for n8n integration.
     
     This is a dedicated endpoint for n8n workflows that provides the same
     functionality as /generate but with webhook-friendly response handling.
     """
-    return await generate_video(request)
+    return await generate_video(request, token)
 
 @app.get("/webhook/status/{task_id}", response_model=TaskStatusResponse, tags=["Webhooks"])
-async def webhook_get_status(task_id: str):
+async def webhook_get_status(task_id: str, token: str = require_auth):
     """
     Webhook endpoint to get task status for n8n integration.
     """
-    return await get_task_status(task_id)
+    return await get_task_status(task_id, token)
 
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=settings.environment == "development",
+        host=settings.host,
+        port=settings.port,
+        reload=settings.debug,
         log_level=settings.log_level.lower()
     )

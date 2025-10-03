@@ -1,13 +1,16 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env file only in development
+if os.getenv("ENVIRONMENT", "development") == "development":
+    load_dotenv()
 
 class Settings:
     google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
     environment: str = os.getenv("ENVIRONMENT", "development")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     host: str = os.getenv("HOST", "0.0.0.0")
+    # Railway provides PORT environment variable
     port: int = int(os.getenv("PORT", "8000"))
     
     # Video generation settings
@@ -18,5 +21,13 @@ class Settings:
     api_title: str = "Veo3 Video Generation API"
     api_description: str = "Generate videos from text prompts using Google Gemini Veo3"
     api_version: str = "1.0.0"
+    
+    # Authentication settings
+    api_key: str = os.getenv("API_KEY", "")
+    require_auth: bool = os.getenv("REQUIRE_AUTH", "true").lower() == "true"
+    
+    # Railway specific settings
+    is_production: bool = environment == "production"
+    debug: bool = environment == "development"
 
 settings = Settings()
