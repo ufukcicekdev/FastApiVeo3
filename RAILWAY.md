@@ -46,7 +46,7 @@ python3 -c "import secrets; print(secrets.token_urlsafe(32))"
    - Go to railway.app
    - "New Project" → "Deploy from GitHub repo"
    - Select your repository
-   - Railway will auto-detect Dockerfile
+   - Railway will auto-detect Python and install dependencies
    - Set environment variables
 
 ### Method 2: Railway CLI
@@ -103,6 +103,8 @@ curl -X GET "$RAILWAY_URL/auth/verify" \
 
 ## Important Notes
 
+- Railway automatically detects Python projects
+- No Docker needed - Railway uses Nixpacks
 - Railway automatically provides $PORT environment variable
 - Health check endpoint: `/health`
 - Automatic HTTPS enabled

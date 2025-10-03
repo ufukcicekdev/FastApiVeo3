@@ -37,7 +37,6 @@ __pycache__/
 .env.dev
 .env.test
 .env.production
-.env.example
 .env.staging
 *.env
 *.pem
