@@ -6,6 +6,9 @@ import google.generativeai as genai
 from config import settings
 from models import VideoGenerationRequest, VideoGenerationResponse, TaskStatusResponse
 import logging
+import tempfile
+import os
+import requests
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -18,7 +21,6 @@ class VideoGenerationService:
             raise ValueError("GOOGLE_API_KEY environment variable is required")
         
         genai.configure(api_key=settings.google_api_key)
-        self.model = genai.GenerativeModel('gemini-1.5-pro-exp-0827')
         
         # In-memory task storage (use Redis/database in production)
         self.tasks: Dict[str, Dict] = {}
@@ -177,44 +179,94 @@ Technical Requirements:
             Dictionary containing video generation results
         """
         try:
-            # Note: This is a placeholder for the actual Veo3 API call
-            # The actual Veo3 API endpoint may differ when officially released
+            logger.info(f"Starting Veo3 API call with prompt: {prompt[:100]}...")
             
-            # Simulate API call delay
-            await asyncio.sleep(5)  # Simulate processing time
+            # Prepare parameters for Veo3 API
+            aspect_ratio_value = request.aspect_ratio.value if request.aspect_ratio and hasattr(request.aspect_ratio, 'value') else str(request.aspect_ratio) if request.aspect_ratio else "16:9"
+            resolution_value = request.resolution.value if request.resolution and hasattr(request.resolution, 'value') else str(request.resolution) if request.resolution else "720p"
             
-            # For now, we'll use the text generation API and return a mock response
-            # This should be replaced with actual Veo3 video generation API when available
-            response = await self._mock_video_generation(prompt, request)
+            # Note: As of now, the google-generativeai library doesn't have direct Veo3 support
+            # We need to use the REST API directly until the library is updated
             
-            return response
+            # Construct the API request
+            api_url = "https://generativelanguage.googleapis.com/v1beta/models/veo-3.0-generate-001:predictLongRunning"
+            headers = {
+                "x-goog-api-key": settings.google_api_key,
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "instances": [{
+                    "prompt": prompt,
+                    "aspectRatio": aspect_ratio_value,
+                    "resolution": resolution_value,
+                    "personGeneration": "allow_all"
+                }]
+            }
+            
+            # Start the video generation operation
+            logger.info("Sending request to Veo3 API...")
+            response = requests.post(api_url, headers=headers, json=payload)
+            
+            if response.status_code != 200:
+                raise Exception(f"API request failed with status {response.status_code}: {response.text}")
+            
+            operation_data = response.json()
+            operation_name = operation_data.get("name")
+            
+            if not operation_name:
+                raise Exception("No operation name returned from API")
+            
+            logger.info(f"Video generation operation started: {operation_name}")
+            
+            # Poll the operation status until the video is ready
+            operation_url = f"https://generativelanguage.googleapis.com/v1beta/{operation_name}"
+            
+            while True:
+                logger.info("Waiting for video generation to complete...")
+                await asyncio.sleep(10)
+                
+                status_response = requests.get(operation_url, headers={"x-goog-api-key": settings.google_api_key})
+                
+                if status_response.status_code != 200:
+                    raise Exception(f"Status check failed: {status_response.text}")
+                
+                status_data = status_response.json()
+                
+                if status_data.get("done"):
+                    break
+            
+            logger.info("Video generation completed")
+            
+            # Extract video URI from response
+            response_data = status_data.get("response", {})
+            generate_response = response_data.get("generateVideoResponse", {})
+            generated_samples = generate_response.get("generatedSamples", [])
+            
+            if not generated_samples:
+                raise Exception("No generated video found in response")
+            
+            video_uri = generated_samples[0].get("video", {}).get("uri")
+            
+            if not video_uri:
+                raise Exception("No video URI found in response")
+            
+            logger.info(f"Video available at: {video_uri}")
+            
+            # Return the video URI - this will be a Google Cloud Storage signed URL
+            return {
+                "video_url": video_uri,
+                "duration": request.duration,
+                "resolution": resolution_value,
+                "aspect_ratio": aspect_ratio_value,
+                "status": "completed"
+            }
             
         except Exception as e:
             logger.error(f"Veo3 API call failed: {str(e)}")
             raise Exception(f"Video generation API error: {str(e)}")
     
-    async def _mock_video_generation(self, prompt: str, request: VideoGenerationRequest) -> Dict:
-        """
-        Mock video generation for testing purposes.
-        Replace this with actual Veo3 API call when available.
-        
-        Args:
-            prompt: Video generation prompt
-            request: Request parameters
-            
-        Returns:
-            Mock video generation result
-        """
-        # This is a mock response - replace with actual Veo3 API integration
-        mock_video_id = str(uuid.uuid4())
-        
-        return {
-            "video_url": f"https://storage.googleapis.com/generated-videos/{mock_video_id}.mp4",
-            "thumbnail_url": f"https://storage.googleapis.com/generated-videos/{mock_video_id}_thumb.jpg",
-            "duration": request.duration,
-            "resolution": request.resolution.value if request.resolution else 'HD',
-            "status": "completed"
-        }
+
     
     def get_task_status(self, task_id: str) -> Optional[TaskStatusResponse]:
         """
@@ -254,6 +306,40 @@ Technical Requirements:
             if task_status:
                 result[task_id] = task_status
         return result
+    
+    async def _download_video_from_uri(self, video_uri: str) -> str:
+        """
+        Download video from Google Cloud Storage URI to a temporary file.
+        
+        Args:
+            video_uri: The video URI from Veo3 API
+            
+        Returns:
+            Local path to the downloaded video file
+        """
+        try:
+            headers = {"x-goog-api-key": settings.google_api_key}
+            
+            # Download the video file
+            response = requests.get(video_uri, headers=headers, stream=True)
+            response.raise_for_status()
+            
+            # Create temporary file
+            temp_dir = tempfile.mkdtemp()
+            video_filename = f"video_{uuid.uuid4()}.mp4"
+            video_path = os.path.join(temp_dir, video_filename)
+            
+            # Save video to file
+            with open(video_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            logger.info(f"Video downloaded to: {video_path}")
+            return video_path
+            
+        except Exception as e:
+            logger.error(f"Failed to download video: {str(e)}")
+            raise
 
 # Global service instance
 video_service = VideoGenerationService()
