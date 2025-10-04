@@ -10,6 +10,7 @@ from models import VideoGenerationRequest, VideoGenerationResponse, TaskStatusRe
 import logging
 import tempfile
 import os
+from s3_uploader import s3_uploader
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -191,7 +192,7 @@ Technical Requirements:
             # Use the official SDK approach like in the documentation
             # For now, let's use the basic approach without config to avoid type issues
             operation = self.client.models.generate_videos(
-                model="veo-2.0-generate-001",
+                model="veo-3.0-fast-generate-001",
                 prompt=prompt
             )
             
@@ -224,33 +225,52 @@ Technical Requirements:
             
             generated_video = operation.response.generated_videos[0]
             
-            # Create a temporary directory for the video
+            # Create a temporary directory for the video download
             temp_dir = tempfile.mkdtemp()
             video_filename = f"video_{uuid.uuid4()}.mp4"
-            video_path = os.path.join(temp_dir, video_filename)
+            temp_video_path = os.path.join(temp_dir, video_filename)
             
             # Try to download the video file using SDK
+            public_video_url = None
             try:
                 if hasattr(generated_video, 'video') and generated_video.video:
                     self.client.files.download(file=generated_video.video)
                     if hasattr(generated_video.video, 'save'):
-                        generated_video.video.save(video_path)
+                        generated_video.video.save(temp_video_path)
                     else:
                         # Alternative: save raw bytes if available
-                        with open(video_path, 'wb') as f:
-                            f.write(generated_video.video.video_bytes)
+                        video_bytes = getattr(generated_video.video, 'video_bytes', None)
+                        if video_bytes:
+                            with open(temp_video_path, 'wb') as f:
+                                f.write(video_bytes)
+                        else:
+                            raise Exception("No video bytes available")
+                    
+                    # Upload to S3 and get public URL
+                    public_video_url = s3_uploader.upload_video(temp_video_path, video_filename)
+                    
+                    # Clean up temporary file
+                    os.remove(temp_video_path)
+                    os.rmdir(temp_dir)
+                    
+                    logger.info(f"Video uploaded to S3: {public_video_url}")
+                    
                 else:
                     raise Exception("No video file found in generated video")
             except Exception as download_error:
-                logger.error(f"Download error: {download_error}")
-                # For now, return a placeholder since this is a test
-                video_path = "placeholder_video_path.mp4"
+                logger.error(f"Download/upload error: {download_error}")
+                # Clean up temp files if they exist
+                if os.path.exists(temp_video_path):
+                    os.remove(temp_video_path)
+                if os.path.exists(temp_dir):
+                    os.rmdir(temp_dir)
+                raise Exception(f"Failed to process video: {download_error}")
             
-            logger.info(f"Video processing completed: {video_path}")
+            logger.info(f"Video processing completed: {public_video_url}")
             
             # Return the video information
             return {
-                "video_url": video_path,  # Local path for now
+                "video_url": public_video_url,  # S3 Public URL
                 "duration": request.duration,
                 "resolution": "auto",  # SDK auto-selects
                 "aspect_ratio": aspect_ratio_value,

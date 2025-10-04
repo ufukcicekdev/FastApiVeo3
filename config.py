@@ -26,6 +26,13 @@ class Settings:
     api_key: str = os.getenv("API_KEY", "")
     require_auth: bool = os.getenv("REQUIRE_AUTH", "true").lower() == "true"
     
+    # AWS S3 / DigitalOcean Spaces settings
+    aws_access_key_id: str = os.getenv("AWS_ACCESS_KEY_ID", "")
+    aws_secret_access_key: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+    aws_storage_bucket_name: str = os.getenv("AWS_STORAGE_BUCKET_NAME", "")
+    aws_s3_region_name: str = os.getenv("AWS_S3_REGION_NAME", "us-east-1")
+    aws_s3_endpoint_url: str = os.getenv("AWS_S3_ENDPOINT_URL", "")
+    
     # Railway specific settings
     is_production: bool = environment == "production"
     debug: bool = environment == "development"
