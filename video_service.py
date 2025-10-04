@@ -191,7 +191,7 @@ Technical Requirements:
             # Use the official SDK approach like in the documentation
             # For now, let's use the basic approach without config to avoid type issues
             operation = self.client.models.generate_videos(
-                model="veo-3.0-generate-001",
+                model="veo-2.0-generate-001",
                 prompt=prompt
             )
             
