@@ -137,8 +137,10 @@ class VideoGenerationService:
         # Get aspect ratio value, handling both enum and string cases
         if request.aspect_ratio and hasattr(request.aspect_ratio, 'value'):
             aspect_ratio_value = request.aspect_ratio.value
+        elif request.aspect_ratio:
+            aspect_ratio_value = str(request.aspect_ratio) 
         else:
-            aspect_ratio_value = str(request.aspect_ratio) if request.aspect_ratio else "16:9"
+            aspect_ratio_value = "16:9"
             
         orientation_hint = orientation_hints.get(aspect_ratio_value, "standard format")
         
@@ -185,15 +187,38 @@ Technical Requirements:
             logger.info(f"Starting Veo3 API call with prompt: {prompt[:100]}...")
             
             # Prepare parameters for Veo3 API using SDK
-            aspect_ratio_value = request.aspect_ratio.value if request.aspect_ratio and hasattr(request.aspect_ratio, 'value') else str(request.aspect_ratio) if request.aspect_ratio else "16:9"
+            # Get the actual string value from AspectRatio enum
+            if request.aspect_ratio and hasattr(request.aspect_ratio, 'value'):
+                aspect_ratio_value = request.aspect_ratio.value
+            elif request.aspect_ratio:
+                aspect_ratio_value = str(request.aspect_ratio)
+            else:
+                aspect_ratio_value = "16:9"
             
-            logger.info(f"Using SDK approach with aspect ratio: {aspect_ratio_value}")
+            # Ensure aspect ratio is in the correct format for API
+            if aspect_ratio_value not in ["16:9", "9:16"]:
+                aspect_ratio_value = "16:9"  # Default to 16:9 if unsupported
             
-            # Use the official SDK approach like in the documentation
-            # For now, let's use the basic approach without config to avoid type issues
+            # Prepare resolution - ensure compatibility with aspect ratio
+            resolution_value = "720p"  # Default
+            if request.resolution:
+                if request.resolution.value == "1080p" and aspect_ratio_value == "16:9":
+                    resolution_value = "1080p"  # 1080p only supports 16:9
+                elif request.resolution.value in ["720p", "540p"]:
+                    resolution_value = "720p"  # Use 720p for all other cases
+            
+            logger.info(f"Using SDK approach with aspect ratio: {aspect_ratio_value}, resolution: {resolution_value}")
+            
+            # Use the official SDK approach with ONLY supported Veo3 parameters
+            # According to official docs: only aspectRatio, resolution, personGeneration, negativePrompt, seed are supported
             operation = self.client.models.generate_videos(
                 model="veo-3.0-fast-generate-001",
-                prompt=prompt
+                prompt=prompt,
+                config=types.GenerateVideosConfig(
+                    aspect_ratio=aspect_ratio_value,
+                    resolution=resolution_value,
+                    person_generation="allow_all"  # Only supported value for text-to-video
+                )
             )
             
             logger.info(f"Video generation operation started: {operation.name if hasattr(operation, 'name') else 'unknown'}")
